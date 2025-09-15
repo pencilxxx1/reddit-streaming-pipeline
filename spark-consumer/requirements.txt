@@ -1,0 +1,5 @@
+pyspark==3.5.0
+pymongo==4.5.0
+kafka-python==2.0.2
+textblob==0.17.1
+langdetect==1.0.9

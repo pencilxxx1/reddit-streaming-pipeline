@@ -1,0 +1,156 @@
+# docker-compose.yml (Compose V2 – no version key)
+
+services:
+  # Zookeeper - Required for Kafka coordination
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - reddit-network
+    restart: unless-stopped
+
+  # Kafka Broker
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092" # external (host) access
+      - "9101:9101"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+
+      # Listen on BOTH the internal Docker network and the host-mapped port
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      
+      # Tell clients how to reach each listener (inside vs. outside Docker)
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+
+      KAFKA_METRICS_REPORTERS: io.confluent.metrics.reporter.ConfluentMetricsReporter
+      KAFKA_CONFLUENT_METRICS_REPORTER_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_CONFLUENT_METRICS_REPORTER_TOPIC_REPLICAS: 1
+      KAFKA_CONFLUENT_METRICS_ENABLE: 'true'
+      KAFKA_CONFLUENT_SUPPORT_CUSTOMER_ID: 'anonymous'
+
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - reddit-network
+    restart: unless-stopped
+
+  # MongoDB Database
+  mongodb:
+    image: mongo:7.0
+    container_name: mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"   # Connect with Compass/mongosh at localhost:27017
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+      MONGO_INITDB_DATABASE: reddit_data
+    volumes:
+      - mongodb_data:/data/db
+      - ./mongodb/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+    networks:
+      - reddit-network
+
+  # Browser UI for MongoDB
+  mongo-express:
+    image: mongo-express:1.0.2
+    container_name: mongo-express
+    depends_on:
+      mongodb:
+        condition: service_started
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: ${MONGO_ROOT_USERNAME}
+      ME_CONFIG_MONGODB_ADMINPASSWORD: ${MONGO_ROOT_PASSWORD}
+      ME_CONFIG_MONGODB_SERVER: mongodb
+      # Basic auth for the web UI (set your own in .env or hard-code)
+      ME_CONFIG_BASICAUTH: "true"
+      ME_CONFIG_BASICAUTH_USERNAME: ${ME_BASIC_AUTH_USER:-admin}
+      ME_CONFIG_BASICAUTH_PASSWORD: ${ME_BASIC_AUTH_PASS:-adminpw}
+    ports:
+      - "8081:8081"     # Open http://localhost:8081 in your browser
+    networks:
+      - reddit-network
+    restart: unless-stopped
+
+  # Reddit Producer Service
+  reddit-producer:
+    build: ./producer
+    container_name: reddit-producer
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      REDDIT_CLIENT_ID: ${REDDIT_CLIENT_ID}
+      REDDIT_CLIENT_SECRET: ${REDDIT_CLIENT_SECRET}
+      REDDIT_USER_AGENT: ${REDDIT_USER_AGENT}
+      REDDIT_SUBREDDITS: ${REDDIT_SUBREDDITS}
+      KAFKA_BROKER: kafka:29092
+      KAFKA_TOPIC: reddit-stream
+    networks:
+      - reddit-network
+    restart: unless-stopped
+
+  # Spark Streaming Consumer
+  spark-consumer:
+    build: ./spark-consumer
+    container_name: spark-consumer
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mongodb:
+        condition: service_started
+    environment:
+      KAFKA_BROKER: kafka:29092
+      KAFKA_TOPIC: reddit-stream
+      # Uses the app user from init-mongo.js; keep credentials in sync with that file
+      MONGO_URI: mongodb://new_user300:Sulaimon1@mongodb:27017/reddit_data?authSource=admin
+      MONGO_DATABASE: reddit_data
+      MONGO_COLLECTION: processed_posts
+    volumes:
+      - ./spark-consumer:/app
+    networks:
+      - reddit-network
+    restart: unless-stopped
+
+  # Streamlit Dashboard
+  dashboard:
+    build: ./dashboard
+    container_name: dashboard
+    depends_on:
+      mongodb:
+        condition: service_started
+    ports:
+      - "8501:8501"   # Open http://localhost:8501
+    environment:
+      # Target the DB and include authSource for root-auth setups
+      MONGO_URI: mongodb://${MONGO_ROOT_USERNAME}:${MONGO_ROOT_PASSWORD}@mongodb:27017/reddit_data?authSource=admin
+      MONGO_DATABASE: reddit_data
+    networks:
+      - reddit-network
+    restart: unless-stopped
+
+networks:
+  reddit-network:
+    driver: bridge
+
+volumes:
+  mongodb_data:
