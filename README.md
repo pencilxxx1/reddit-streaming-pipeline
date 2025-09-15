@@ -270,11 +270,7 @@ docker network inspect reddit-streaming-pipeline_reddit-network
 - Confluent for Kafka Docker images
 - MongoDB team for Mongo Express
 
-## 📄 License
-
-MIT License - See LICENSE file for details
-
----
+##
 
 **Last Updated**: 2024
 **Docker Compose Version**: V2 (no version key required)
