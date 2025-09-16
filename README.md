@@ -302,7 +302,7 @@ docker network inspect reddit-streaming-pipeline_reddit-network
 ## 👥 Contributors
 
 - Akeem Agboola ([@pencilxxx1](https://github.com/pencilxxx1))
-- Michael Nwamadi([@
+- Michael Nwamadi([@lala234101]((https://github.com/lala234101))
 
 
 
@@ -312,3 +312,4 @@ docker network inspect reddit-streaming-pipeline_reddit-network
 - Apache Spark community
 - Confluent for Kafka Docker images
 - MongoDB team for Mongo Express
+
